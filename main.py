@@ -1,6 +1,10 @@
 import cv2
 import argparse
 from json import load, dump
+import torch
+from OC_SORT.trackers.ocsort_tracker.ocsort import OCSort
+from OC_SORT.yolox.utils.visualize import plot_tracking
+from OC_SORT.trackers.tracking_utils.timer import Timer
 
 def video_frame_generator(video_path):
     cap = cv2.VideoCapture(video_path)
@@ -123,10 +127,17 @@ if __name__ == "__main__":
     
     frame_generator = video_frame_generator(args.source_video_path)
 
+    ocsort_tracker = OCSort(max_age=30,
+                            det_thresh=0.6,
+                            iou_threshold=0.3,
+                            use_byte=True)
+    
+    min_box_area = 20   
+
     frame = next(frame_generator)
     
 
-
+    # Select road vertical line coordinates from gui or config
     if args.select_road_lines_by_gui:
         road_vertical_line_coords = select_lines(frame,"Select road vertical reference lines from leftmost to rightmost. Press 'q' to quit.")
         if args.update_lines_in_config:
@@ -140,12 +151,46 @@ if __name__ == "__main__":
         with open("config.json","r") as fp:
             config = load(fp)
             road_vertical_line_coords = config["road_vertical_line_coords"]
+
+    # Load pretrained object detection model
+    model = torch.hub.load('ultralytics/yolov5',
+                        'yolov5s6',
+                        device="0" if torch.cuda.is_available() else "cpu")
     
+
+    timer = Timer()
+    
+    timer.tic()
     with VideoWriter(args.target_video_path, fps = 30) as video_writer:
-        for frame in frame_generator:
+        for frame_id, frame in enumerate(frame_generator):
+            object_predictions = model(frame,size=1280)
+            outputs = object_predictions.pred[0]
+            if outputs is not None:
+                online_targets = ocsort_tracker.update(outputs, [frame.shape[0], frame.shape[1]], (frame.shape[0], frame.shape[1]))
+                online_tlwhs = []
+                online_ids = []
+                for t in online_targets:
+                    tlwh = [t[0], t[1], t[2] - t[0], t[3] - t[1]]
+                    tid = t[4]
+                    if tlwh[2] * tlwh[3] > min_box_area:
+                        online_tlwhs.append(tlwh)
+                        online_ids.append(tid)
+                
+                timer.toc()
+                fps = 1. / timer.average_time
+
+                frame = plot_tracking(image=frame,
+                              tlwhs=online_tlwhs,
+                              obj_ids=online_ids,
+                              frame_id=frame_id,
+                              fps=fps)
+                
+            
             frame = plot_lines(frame, road_vertical_line_coords)
             cv2.imshow("Car Direction Counting", frame)
             video_writer.write_frame(frame)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+            delay = 1
+            if cv2.waitKey(delay) & 0xFF == ord("q"):
                 break
+            timer.tic()
         cv2.destroyAllWindows()
