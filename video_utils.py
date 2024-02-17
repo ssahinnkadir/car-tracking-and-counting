@@ -1,13 +1,10 @@
 import cv2
 
-def video_frame_generator(video_path):
+def video_frame_generator(video_path,resize= False):
     cap = cv2.VideoCapture(video_path)
     w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
     h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
-    w = int(w/2.5)
-    h = int(h/2.5)
-    
     if not cap.isOpened():
         print("Video reader initialization failed.")
         return
@@ -16,7 +13,8 @@ def video_frame_generator(video_path):
         ret, frame = cap.read()
         if not ret:
             break
-        frame = cv2.resize(frame,(w,h))
+        if resize:
+            frame = cv2.resize(frame,(int(w/2),int(h/2)))
         yield frame
 
     cap.release()

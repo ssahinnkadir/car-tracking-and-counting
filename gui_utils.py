@@ -12,7 +12,10 @@ def select_line(frame,window_msg):
             cv2.imshow(window_msg, frame)
 
     # create window and connect to the callback function
-    cv2.namedWindow(window_msg)
+    cv2.namedWindow(window_msg,cv2.WINDOW_NORMAL)
+
+    cv2.setWindowProperty(window_msg,cv2.WND_PROP_FULLSCREEN,1)
+    
     cv2.setMouseCallback(window_msg, mouse_callback)
 
     while True:
@@ -46,17 +49,20 @@ def select_four_rois(image):
         performing video stabilization (adaptive road line shifting)
     """
     rois = []
-
+    window_msg = "Select ROI for reference point selection"
+    cv2.namedWindow(window_msg,cv2.WINDOW_NORMAL)
+    cv2.setWindowProperty(window_msg,cv2.WND_PROP_FULLSCREEN,1)
     for _ in range(4):
-        roi = cv2.selectROI("Select ROI", image)
+        cv2.imshow(window_msg, image)
+        roi = cv2.selectROI(window_msg, image)
         (x, y, w, h) = roi
         x1y1x2y2  = (x, y, x + w, y + h)
         rois.append(x1y1x2y2)
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        cv2.imshow("Select ROIs and press ENTER", image)
+        # cv2.imshow("Select ROIs and press ENTER", image)
         cv2.waitKey(1)
-        cv2.destroyAllWindows()
-
+        # 
+    cv2.destroyAllWindows()
     return rois
 
 def select_best_feature_in_roi(gray_frame, roi, feature_params):

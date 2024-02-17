@@ -3,13 +3,17 @@ import numpy as np
 import argparse
 from json import load, dump
 import torch
+from datetime import time,datetime,timedelta
+from pathlib import Path
+
 from OC_SORT.trackers.ocsort_tracker.ocsort import OCSort
 from OC_SORT.yolox.utils.visualize import plot_tracking
 from OC_SORT.trackers.tracking_utils.timer import Timer
 from gui_utils import select_lines, select_four_rois, select_best_feature_in_roi
 from video_utils import VideoWriter, video_frame_generator
-from draw_utils import plot_lines, plot_points
+from draw_utils import plot_lines, plot_points,draw_label
 from math_utils import ViewTransformer
+from car_state import CarTrack
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -42,20 +46,30 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--update_ref_points_in_config", default=False, help="Update the reference points coords in config.json with new ones selected via mouse", type=bool
     )
+    parser.add_argument(
+        "--resize_video_by_half", default=True, help="Update the reference points coords in config.json with new ones selected via mouse", type=bool
+    )
 
     return parser.parse_args()
     
 if __name__ == "__main__":
     args = parse_arguments()
+
+    now = datetime.now() # generated to use timedelta addition
+    time_begin = time(13,50)
+    datetime_begin = datetime.combine(now,time_begin)
+    time_passed_in_seconds = 0
+    video_fps = 30
+    result_list = []
     
-    frame_generator = video_frame_generator(args.source_video_path)
+    frame_generator = video_frame_generator(args.source_video_path,args.resize_video_by_half)
 
     ocsort_tracker = OCSort(max_age=30,
                             det_thresh=0.6,
                             iou_threshold=0.3,
                             use_byte=True)
     
-    min_box_area = 20   
+    min_box_area = 20 # discard possible false positive or too far detections which cannot be tracked optimally
 
     frame = next(frame_generator)
 
@@ -72,6 +86,12 @@ if __name__ == "__main__":
                     maxLevel = 2, 
                     criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 
                     10, 0.03))
+    config_path = Path(args.source_video_path).stem+"_config"
+    config_path = Path(config_path).with_suffix(".json")
+    
+    if not config_path.exists():
+        with open(config_path,"w") as fp:
+            dump({},fp)
     
     if args.select_ref_points_by_gui:
         selected_rois = select_four_rois(frame)
@@ -84,14 +104,14 @@ if __name__ == "__main__":
                 coord = (int((x1+x2)/2),int((y1+y2)/2))
             p0.append(coord)
         if args.update_ref_points_in_config:
-            with open("config.json","r+") as fp:
-                config = load(fp,)
+            with open(config_path,"r+") as fp:
+                config = load(fp)
                 config["ref_points_for_video_stabilization"] = p0
                 fp.seek(0)
                 config = dump(config, fp,indent=1)
                 fp.truncate()
     else:
-        with open("config.json","r") as fp:
+        with open(config_path,"r") as fp:
             config = load(fp)
             p0 = config["ref_points_for_video_stabilization"]
  
@@ -99,18 +119,20 @@ if __name__ == "__main__":
     p0 = np.array(p0, dtype=np.float32)
     p0 = np.expand_dims(p0,axis=1)
 
+    track_ids_to_tracks_dict = {}
+
     # Select road vertical line coordinates from gui or config
     if args.select_road_lines_by_gui:
         road_vertical_line_coords = select_lines(frame,"Select road vertical reference lines from leftmost to rightmost. Press 'q' to quit.")
         if args.update_lines_in_config:
-            with open("config.json","r+") as fp:
+            with open(config_path,"r+") as fp:
                 config = load(fp,)
                 config["road_vertical_line_coords"] = road_vertical_line_coords
                 fp.seek(0)
                 config = dump(config, fp, indent=1)
                 fp.truncate()
     else:
-        with open("config.json","r") as fp:
+        with open(config_path,"r") as fp:
             config = load(fp)
             road_vertical_line_coords = config["road_vertical_line_coords"]
 
@@ -118,15 +140,16 @@ if __name__ == "__main__":
     model = torch.hub.load('ultralytics/yolov5', 'yolov5s6',
                         device="0" if torch.cuda.is_available() else "cpu")
     
-    timer = Timer()
+    timer = Timer() # This timer is used for FPS calculation purpose, not car state timestamp
     timer.tic()
-
     # generate a grayscale copy of first frame for using in Lucas Canade optical flow
     old_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     p0_0 = p0.copy() # store initial coordinates of selected reference points to later calculate location transformation
 
     with VideoWriter(args.target_video_path, fps = 30) as video_writer:
         for frame_id, frame in enumerate(frame_generator):
+            time_passed_in_seconds = (frame_id+1)/video_fps
+            current_timestamp = datetime_begin + timedelta(seconds=time_passed_in_seconds)
 
             # Calculate optical flow for selected reference points and apply spatial transformation to road lane coordinates
             frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -151,8 +174,36 @@ if __name__ == "__main__":
                 online_tlwhs = []     # output of the tracker is a np.array as [[x1,y1,x2,y2,track_id],[x1,y1,x2,y2,track_id],...]
                 online_ids = []
                 for t in online_targets:
-                    tlwh = [t[0], t[1], t[2] - t[0], t[3] - t[1]]
                     tid = t[4]
+                    car_bottom_coord = (int((t[0]+t[2])/2),int(t[3]))
+                    
+                    if track_ids_to_tracks_dict.get(tid):
+                        track_ids_to_tracks_dict[tid].add_coordinate(t[:4],updated_coordinates)
+                    else:    
+                        track_ids_to_tracks_dict[tid] = CarTrack(id,t[:4])
+                    vert_direction = track_ids_to_tracks_dict[tid].check_direction()
+                    lane_change_state = track_ids_to_tracks_dict[tid].check_lane_change()
+                    frame = draw_label(frame,t,vert_direction)
+                    frame = draw_label(frame,t,lane_change_state)
+                    
+                    
+                    if len(vert_direction) > 0: # could be also stationary car which is returned from
+                                                # function as "" empty string for generic draw_label trick
+                        car_data = {
+                            'car_id': tid,
+                            'timestamp': str(current_timestamp),
+                            'state': vert_direction.lower()
+                        }
+                        result_list.append(car_data)
+                    if len(lane_change_state) > 0:
+                        car_data = {
+                            'car_id': tid,
+                            'timestamp': str(current_timestamp),
+                            'state': lane_change_state.lower()
+                        }
+                        result_list.append(car_data)
+
+                    tlwh = [t[0], t[1], t[2] - t[0], t[3] - t[1]]
                     if tlwh[2] * tlwh[3] > min_box_area:
                         online_tlwhs.append(tlwh)
                         online_ids.append(tid)
@@ -175,3 +226,8 @@ if __name__ == "__main__":
                 break
             timer.tic()
         cv2.destroyAllWindows()
+    
+    result_json_path = Path(args.source_video_path).stem+"_result"
+    result_json_path = Path(result_json_path).with_suffix(".json")
+    with open(result_json_path, "w") as fs:
+        dump(result_list,fs)
