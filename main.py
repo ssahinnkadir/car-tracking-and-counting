@@ -24,31 +24,30 @@ def parse_arguments() -> argparse.Namespace:
         "source_video_path",
         nargs="*",
         help="Path to the source video file",
-        default="./data/video1.MOV",
+        default="./data/video2.MOV",
         type=str,
     )
     parser.add_argument(
         "target_video_path",
         nargs="*",
         help="Path to the target video file (output)",
-        default="./data/video1_out.MOV",
+        default="./data/video2_out_cpu_onnx.MOV",
         type=str,
     )
     parser.add_argument(
-        "--select_road_lines_by_gui", default=False, help="Select road lines by selecting points on frame, if false, points are read from config.json", type=bool
+        "--select_road_lines_by_gui", action="store_true", help="Select road lines by selecting points on frame, if false, points are read from config.json",
     )
     parser.add_argument(
-        "--update_lines_in_config", default=False, help="Update the road line coords in config.json with new ones selected via mouse", type=bool
+        "--update_lines_in_config", action="store_true", help="Update the road line coords in config.json with new ones selected via mouse", 
     )
     parser.add_argument(
-        "--select_ref_points_by_gui", default=False, help="Select reference points by selecting points on frame, if false, points are read from config.json", type=bool
+        "--select_ref_points_by_gui", action="store_true", help="Select reference points by selecting points on frame, if false, points are read from config.json",
     )
     parser.add_argument(
-        "--update_ref_points_in_config", default=False, help="Update the reference points coords in config.json with new ones selected via mouse", type=bool
+        "--update_ref_points_in_config", action="store_true", help="Update the reference points coords in config.json with new ones selected via mouse", 
     )
     parser.add_argument(
-        "--resize_video_by_half", default=True, help="Update the reference points coords in config.json with new ones selected via mouse", type=bool
-    )
+        "--resize_video_by_half", action="store_true", help="Update the reference points coords in config.json with new ones selected via mouse")
 
     return parser.parse_args()
     
@@ -137,8 +136,14 @@ if __name__ == "__main__":
             road_vertical_line_coords = config["road_vertical_line_coords"]
 
     # Load pretrained object detection model
-    model = torch.hub.load('ultralytics/yolov5', 'yolov5s6',
-                        device="0" if torch.cuda.is_available() else "cpu")
+            
+    # model = torch.hub.load('ultralytics/yolov5', 'yolov5s6',
+    #                     device="0" if torch.cuda.is_available() else "cpu")
+            
+    # model = torch.hub.load('ultralytics/yolov5', 'yolov5s6',
+    #                     device="cpu")
+            
+    model = torch.hub.load('ultralytics/yolov5', 'custom', 'yolov5s6.onnx')
     
     timer = Timer() # This timer is used for FPS calculation purpose, not car state timestamp
     timer.tic()
@@ -146,6 +151,7 @@ if __name__ == "__main__":
     old_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     p0_0 = p0.copy() # store initial coordinates of selected reference points to later calculate location transformation
 
+    # Detection and tracking inference loop
     with VideoWriter(args.target_video_path, fps = 30) as video_writer:
         for frame_id, frame in enumerate(frame_generator):
             time_passed_in_seconds = (frame_id+1)/video_fps
@@ -177,12 +183,12 @@ if __name__ == "__main__":
                     tid = t[4]
                     car_bottom_coord = (int((t[0]+t[2])/2),int(t[3]))
                     
-                    if track_ids_to_tracks_dict.get(tid):
+                    if track_ids_to_tracks_dict.get(tid): # add coordinate to the CarTrack objects history
                         track_ids_to_tracks_dict[tid].add_coordinate(t[:4],updated_coordinates)
-                    else:    
+                    else: # Initialize a CarTrack class instance which keeps the coordinate history
                         track_ids_to_tracks_dict[tid] = CarTrack(id,t[:4])
-                    vert_direction = track_ids_to_tracks_dict[tid].check_direction()
-                    lane_change_state = track_ids_to_tracks_dict[tid].check_lane_change()
+                    vert_direction = track_ids_to_tracks_dict[tid].check_direction()  # calculate the current vertical movement state using history
+                    lane_change_state = track_ids_to_tracks_dict[tid].check_lane_change()  # calculate the current lane change state using history
                     frame = draw_label(frame,t,vert_direction)
                     frame = draw_label(frame,t,lane_change_state)
                     

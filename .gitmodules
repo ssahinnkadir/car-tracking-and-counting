@@ -1,3 +1,6 @@
 [submodule "OC_SORT"]
 	path = OC_SORT
 	url = https://github.com/noahcao/OC_SORT.git
+[submodule "yolov5"]
+	path = yolov5
+	url = https://github.com/ultralytics/yolov5.git

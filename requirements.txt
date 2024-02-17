@@ -1,0 +1,14 @@
+torch
+yolov5
+ultralytics
+opencv-python
+onnx
+onnxruntime-gpu
+onnxsim
+
+# For OCSort tracker inference, please clone the 
+# https://github.com/noahcao/OC_SORT repo into project folder
+
+# For model conversion please clone the 
+# https://github.com/ultralytics/yolov5 repo into project folder
+
