@@ -57,6 +57,9 @@ python main.py SOURCE_VIDEO_PATH TARGET_VIDEO_PATH --select_road_lines_by_gui --
 - **YOLOv5s6** model was able to perform inference at **4-5 FPS only**, when using CPU.
 - Same model converted to **ONNX** performed inference at **20 FPS**, which means approximately **4x** faster inference.
 
+### 📈  Result Visualizations
+- For the visual analysis of car direction states over time for given videos, see the [notebook](./visualize_results.ipynb)
+
 ### 🛠️  TODO
 * [] A more comprehensive object tracking Framework [Norfair](https://github.com/tryolabs/norfair/tree/master) might be leveraged for obtaining more accurate and less switching car tracks. Norfair also uses Optical Flow info for better association of detection bounding boxes between consequtive frames.
 * [] A detection postprocess can be used for improving car detection and tracking in distance, such as [sahi](https://github.com/obss/sahi). But this approach might reduce the inference speed dramatically.
