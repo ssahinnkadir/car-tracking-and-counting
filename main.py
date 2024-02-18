@@ -14,6 +14,7 @@ from video_utils import VideoWriter, video_frame_generator
 from draw_utils import plot_lines, plot_points,draw_label
 from math_utils import ViewTransformer
 from car_state import CarTrack
+from collections import defaultdict
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -24,14 +25,14 @@ def parse_arguments() -> argparse.Namespace:
         "source_video_path",
         nargs="*",
         help="Path to the source video file",
-        default="./data/video2.MOV",
+        default="./data/video1.MOV",
         type=str,
     )
     parser.add_argument(
         "target_video_path",
         nargs="*",
         help="Path to the target video file (output)",
-        default="./data/video2_out_cpu_onnx.MOV",
+        default="./data/video1_out.MOV",
         type=str,
     )
     parser.add_argument(
@@ -135,21 +136,29 @@ if __name__ == "__main__":
             config = load(fp)
             road_vertical_line_coords = config["road_vertical_line_coords"]
 
+    height,width,_ = frame.shape
+    top_horizontal_line_y = int(0.7*height)
+    bottom_horizontal_line_y = int(0.8*height)
+    top_horizontal_line_coords = [[0,top_horizontal_line_y],[width,top_horizontal_line_y]]
+    bottom_horizontal_line_coords = [[0,bottom_horizontal_line_y],[width,bottom_horizontal_line_y]]
+
     # Load pretrained object detection model
             
-    # model = torch.hub.load('ultralytics/yolov5', 'yolov5s6',
-    #                     device="0" if torch.cuda.is_available() else "cpu")
+    model = torch.hub.load('ultralytics/yolov5', 'yolov5s6',
+                        device="0" if torch.cuda.is_available() else "cpu")
             
     # model = torch.hub.load('ultralytics/yolov5', 'yolov5s6',
     #                     device="cpu")
             
-    model = torch.hub.load('ultralytics/yolov5', 'custom', 'yolov5s6.onnx')
+    # model = torch.hub.load('ultralytics/yolov5', 'custom', 'yolov5s6.onnx')
     
     timer = Timer() # This timer is used for FPS calculation purpose, not car state timestamp
     timer.tic()
     # generate a grayscale copy of first frame for using in Lucas Canade optical flow
     old_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     p0_0 = p0.copy() # store initial coordinates of selected reference points to later calculate location transformation
+
+    states_to_trackids = defaultdict(list)
 
     # Detection and tracking inference loop
     with VideoWriter(args.target_video_path, fps = 30) as video_writer:
@@ -187,13 +196,13 @@ if __name__ == "__main__":
                         track_ids_to_tracks_dict[tid].add_coordinate(t[:4],updated_coordinates)
                     else: # Initialize a CarTrack class instance which keeps the coordinate history
                         track_ids_to_tracks_dict[tid] = CarTrack(id,t[:4])
-                    vert_direction = track_ids_to_tracks_dict[tid].check_direction()  # calculate the current vertical movement state using history
+                    vert_direction = track_ids_to_tracks_dict[tid].check_direction(top_horizontal_line_y,bottom_horizontal_line_y)  # calculate the current vertical movement state using history
                     lane_change_state = track_ids_to_tracks_dict[tid].check_lane_change()  # calculate the current lane change state using history
                     frame = draw_label(frame,t,vert_direction)
                     frame = draw_label(frame,t,lane_change_state)
                     
                     
-                    if len(vert_direction) > 0: # could be also stationary car which is returned from
+                    if len(vert_direction) > 0 and (tid not in states_to_trackids[vert_direction]): # could be also stationary car which is returned from
                                                 # function as "" empty string for generic draw_label trick
                         car_data = {
                             'car_id': tid,
@@ -201,13 +210,15 @@ if __name__ == "__main__":
                             'state': vert_direction.lower()
                         }
                         result_list.append(car_data)
-                    if len(lane_change_state) > 0:
+                        states_to_trackids[vert_direction].append(tid)
+                    if len(lane_change_state) > 0 and (tid not in states_to_trackids[lane_change_state]):
                         car_data = {
                             'car_id': tid,
                             'timestamp': str(current_timestamp),
                             'state': lane_change_state.lower()
                         }
                         result_list.append(car_data)
+                        states_to_trackids[lane_change_state].append(tid)
 
                     tlwh = [t[0], t[1], t[2] - t[0], t[3] - t[1]]
                     if tlwh[2] * tlwh[3] > min_box_area:
@@ -224,6 +235,7 @@ if __name__ == "__main__":
                               fps=fps)
             
             frame = plot_lines(frame, updated_coordinates)
+            frame = plot_lines(frame, [top_horizontal_line_coords,bottom_horizontal_line_coords])
             frame = plot_points(frame,p0.squeeze().tolist())
             cv2.imshow("Car Direction Counting", frame)
             video_writer.write_frame(frame)

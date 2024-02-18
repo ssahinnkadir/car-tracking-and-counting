@@ -80,19 +80,21 @@ class CarTrack:
             
     def get_bottom_center_coord(self,coord):
         return (int((coord[0]+coord[2])/2),int(coord[3]))
-    def check_direction(self):
+    def check_direction(self,top_line_y,bottom_line_y):
         if len(self.xy_bottom_center_history) < 2:
             return ""
         
         # Check the last 100 direction changes
         last_direction_changes = list(self.vertical_direction_history)
-        
         # Calculate the total direction change
         total_change = sum(last_direction_changes)
-        
-        if total_change < 0:
+        last_y_coordinate = self.xy_bottom_center_history[-1][1]
+        is_between_horizontal_lines = (bottom_line_y >=last_y_coordinate >= top_line_y)
+        if is_between_horizontal_lines:
+            a = 1
+        if total_change < 0 and is_between_horizontal_lines:
             return "up"
-        elif total_change > 0:
+        elif total_change > 0 and is_between_horizontal_lines:
             return "down"
         else:
             return ""
